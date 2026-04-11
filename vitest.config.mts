@@ -9,6 +9,7 @@ export default defineConfig({
         vars: {
           UPSTASH_URL: "https://test.upstash.io",
           UPSTASH_TOKEN: "test-token",
+          ACCESS_TOKEN: "test-access-token",
         },
       },
     }),

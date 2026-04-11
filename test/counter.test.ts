@@ -36,15 +36,17 @@ vi.stubGlobal("fetch", async (input: RequestInfo, init?: RequestInit): Promise<R
   return (globalThis as unknown as { _originalFetch: typeof fetch })._originalFetch(input as RequestInfo, init);
 });
 
+const AUTH_HEADER = "Bearer test-access-token";
+
 async function invoke(method: string, path: string, body?: unknown, headers?: Record<string, string>): Promise<Response> {
   const url = "http://localhost" + path;
   const init: RequestInit = { method };
-  const mergedHeaders: Record<string, string> = { ...headers };
+  const mergedHeaders: Record<string, string> = { Authorization: AUTH_HEADER, ...headers };
   if (body !== undefined) {
     mergedHeaders["Content-Type"] = "application/json";
     init.body = JSON.stringify(body);
   }
-  if (Object.keys(mergedHeaders).length > 0) init.headers = mergedHeaders;
+  init.headers = mergedHeaders;
   return SELF.fetch(url, init);
 }
 
@@ -187,6 +189,25 @@ describe("Counter API", () => {
       const res = await invoke("GET", "/unknown");
       expect(res.status).toBe(404);
       await res.text(); // consume body
+    });
+  });
+
+  describe("auth", () => {
+    it("returns 401 with no Authorization header", async () => {
+      const res = await SELF.fetch("http://localhost/increment", { method: "POST" });
+      expect(res.status).toBe(401);
+      const body = await res.json<{ error: string }>();
+      expect(body.error).toBe("unauthorized");
+    });
+
+    it("returns 401 with a wrong token", async () => {
+      const res = await SELF.fetch("http://localhost/increment", {
+        method: "POST",
+        headers: { Authorization: "Bearer wrong-token" },
+      });
+      expect(res.status).toBe(401);
+      const body = await res.json<{ error: string }>();
+      expect(body.error).toBe("unauthorized");
     });
   });
 });
