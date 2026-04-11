@@ -2,6 +2,8 @@ import type { Env, CounterResponse, ErrorResponse, RequestBody } from "./types";
 
 const COUNTER_KEY = "counter:global";
 const COOKIE_TTL_SECONDS = 24 * 60 * 60; // 24 hours
+const MAX_BODY_BYTES = 1_024; 
+const MAX_DELTA = 1_000;
 
 // Atomically add delta to the counter and clamp the result to >= 0
 const UPSERT_SCRIPT =
@@ -36,6 +38,7 @@ function parseDelta(body: RequestBody): number | null {
   if (typeof body.delta !== "number" || !Number.isInteger(body.delta) || body.delta === 0) {
     return null;
   }
+  if (Math.abs(body.delta) > MAX_DELTA) return null;
   return body.delta;
 }
 
@@ -50,14 +53,19 @@ function isReturningVisitor(request: Request): boolean {
   return false;
 }
 
-function isAuthorized(request: Request, env: Env): boolean {
+async function isAuthorized(request: Request, env: Env): Promise<boolean> {
   const authHeader = request.headers.get("Authorization") ?? "";
   const [scheme, token] = authHeader.split(" ");
-  return scheme === "Bearer" && token === env.ACCESS_TOKEN;
+  if (scheme !== "Bearer" || !token || !env.ACCESS_TOKEN) return false;
+  const encoder = new TextEncoder();
+  const a = encoder.encode(token);
+  const b = encoder.encode(env.ACCESS_TOKEN);
+  if (a.byteLength !== b.byteLength) return false;
+  return crypto.subtle.timingSafeEqual(a, b);
 }
 
 export async function handleRequest(request: Request, env: Env): Promise<Response> {
-  if (!isAuthorized(request, env)) {
+  if (!(await isAuthorized(request, env))) {
     return jsonResponse({ error: "unauthorized", message: "invalid or missing access token" }, 401);
   }
 
@@ -73,9 +81,17 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
       );
     }
 
+    const contentLength = request.headers.get("Content-Length");
+    if (contentLength !== null && Number(contentLength) > MAX_BODY_BYTES) {
+      return jsonResponse({ error: "payload_too_large", message: "request body must not exceed 1KB" }, 413);
+    }
+
     let body: RequestBody = {};
     try {
       const text = await request.text();
+      if (text.length > MAX_BODY_BYTES) {
+        return jsonResponse({ error: "payload_too_large", message: "request body must not exceed 1KB" }, 413);
+      }
       if (text.trim().length > 0) {
         body = JSON.parse(text) as RequestBody;
       }
@@ -135,7 +151,7 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
     if (operation === "increment") {
       response.headers.append(
         "Set-Cookie",
-        `portfolio_visited=true; Max-Age=${COOKIE_TTL_SECONDS}; Path=/; HttpOnly; SameSite=Lax`
+        `portfolio_visited=true; Max-Age=${COOKIE_TTL_SECONDS}; Path=/; HttpOnly; Secure; SameSite=Lax`
       );
     }
     return response;
