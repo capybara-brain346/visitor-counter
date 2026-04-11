@@ -1,12 +1,13 @@
-import { SELF, runInDurableObject } from "cloudflare:test";
+import { SELF, applyD1Migrations } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { describe, it, expect } from "vitest";
-import type { Counter } from "../src/counter";
+import { describe, it, expect, beforeAll } from "vitest";
+import type { D1Migration } from "@cloudflare/vitest-pool-workers";
 
-// Extend the test Env interface so TypeScript knows about the COUNTER binding
+// Extend the test Env interface so TypeScript knows about the DB binding
 declare module "cloudflare:workers" {
   interface ProvidedEnv {
-    COUNTER: DurableObjectNamespace;
+    DB: D1Database;
+    TEST_MIGRATIONS: D1Migration[];
   }
 }
 
@@ -22,16 +23,22 @@ async function invoke(method: string, path: string, body?: unknown, headers?: Re
   return SELF.fetch(url, init);
 }
 
-/** Directly set the counter value in storage, bypassing HTTP — avoids WAL isolation issues. */
+/** Directly set the counter value in D1, bypassing HTTP. */
 async function seedCount(value: number): Promise<void> {
-  const id = env.COUNTER.idFromName("global");
-  const stub = env.COUNTER.get(id);
-  await runInDurableObject(stub, async (_instance: Counter, state: DurableObjectState) => {
-    await state.storage.put("count", value);
-  });
+  await env.DB
+    .prepare(
+      `INSERT INTO counters (name, count) VALUES ('global', ?)
+       ON CONFLICT(name) DO UPDATE SET count = ?`
+    )
+    .bind(value, value)
+    .run();
 }
 
 describe("Counter API", () => {
+  beforeAll(async () => {
+    await applyD1Migrations(env.DB, env.TEST_MIGRATIONS);
+  });
+
   describe("POST /increment", () => {
     it("increments from 0 to 1 with no body", async () => {
       const res = await invoke("POST", "/increment");

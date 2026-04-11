@@ -1,5 +1,5 @@
 export interface Env {
-  COUNTER: DurableObjectNamespace;
+  counter_db: D1Database;
 }
 
 export interface CounterResponse {

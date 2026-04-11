@@ -1,11 +1,8 @@
 import type { Env } from "./types";
-
-export { Counter } from "./counter";
+import { handleRequest } from "./counter";
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    const id = env.COUNTER.idFromName("global");
-    const stub = env.COUNTER.get(id);
-    return stub.fetch(request);
+    return handleRequest(request, env);
   },
 } satisfies ExportedHandler<Env>;
