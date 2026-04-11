@@ -2,8 +2,7 @@ name = "counter-api"
 main = "src/worker.ts"
 compatibility_date = "2024-01-01"
 
-[[d1_databases]]
-binding = "counter_db_apac"
-database_name = "counter-db-apac"
-database_id = "e4a39466-8c17-48a0-a707-16332df86036"
-migrations_dir = "migrations"
+# Set Upstash Redis credentials as secrets:
+#   wrangler secret put UPSTASH_URL
+#   wrangler secret put UPSTASH_TOKEN
+# For local dev, add them to a .dev.vars file (gitignored).

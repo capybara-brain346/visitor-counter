@@ -1,15 +1,40 @@
-import { SELF, applyD1Migrations } from "cloudflare:test";
-import { env } from "cloudflare:workers";
-import { describe, it, expect, beforeAll } from "vitest";
-import type { D1Migration } from "@cloudflare/vitest-pool-workers";
+import { vi, beforeEach, describe, it, expect } from "vitest";
+import { SELF } from "cloudflare:test";
 
-// Extend the test Env interface so TypeScript knows about the DB binding
-declare module "cloudflare:workers" {
-  interface ProvidedEnv {
-    DB: D1Database;
-    TEST_MIGRATIONS: D1Migration[];
+// Hoist the store so it's accessible inside the fetch mock
+const { store } = vi.hoisted(() => ({
+  store: new Map<string, number>(),
+}));
+
+// Intercept calls to the Upstash REST API and handle them in-memory
+vi.stubGlobal("fetch", async (input: RequestInfo, init?: RequestInit): Promise<Response> => {
+  const url = typeof input === "string" ? input : input instanceof URL ? input.href : (input as Request).url;
+  if (url === "https://test.upstash.io") {
+    const args = JSON.parse((init?.body as string) ?? "[]") as unknown[];
+    const command = String(args[0]).toUpperCase();
+
+    let result: unknown = null;
+    if (command === "GET") {
+      const key = String(args[1]);
+      result = store.has(key) ? String(store.get(key)) : null;
+    } else if (command === "EVAL") {
+      // EVAL script numkeys key delta
+      const key = String(args[3]);
+      const delta = parseInt(String(args[4]), 10);
+      const current = store.get(key) ?? 0;
+      const newVal = Math.max(0, current + delta);
+      store.set(key, newVal);
+      result = newVal;
+    }
+
+    return new Response(JSON.stringify({ result }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
   }
-}
+  // Pass through any other fetch calls (e.g. SELF.fetch)
+  return (globalThis as unknown as { _originalFetch: typeof fetch })._originalFetch(input as RequestInfo, init);
+});
 
 async function invoke(method: string, path: string, body?: unknown, headers?: Record<string, string>): Promise<Response> {
   const url = "http://localhost" + path;
@@ -23,20 +48,14 @@ async function invoke(method: string, path: string, body?: unknown, headers?: Re
   return SELF.fetch(url, init);
 }
 
-/** Directly set the counter value in D1, bypassing HTTP. */
-async function seedCount(value: number): Promise<void> {
-  await env.DB
-    .prepare(
-      `INSERT INTO counters (name, count) VALUES ('global', ?)
-       ON CONFLICT(name) DO UPDATE SET count = ?`
-    )
-    .bind(value, value)
-    .run();
+/** Directly set the counter value in the mock store, bypassing HTTP. */
+function seedCount(value: number): void {
+  store.set("counter:global", value);
 }
 
 describe("Counter API", () => {
-  beforeAll(async () => {
-    await applyD1Migrations(env.DB, env.TEST_MIGRATIONS);
+  beforeEach(() => {
+    store.clear();
   });
 
   describe("POST /increment", () => {
@@ -49,7 +68,7 @@ describe("Counter API", () => {
     });
 
     it("increments by a custom delta", async () => {
-      await seedCount(1);
+      seedCount(1);
       const res = await invoke("POST", "/increment", { delta: 9 }); // 1 + 9 = 10
       expect(res.status).toBe(200);
       const body = await res.json<{ count: number }>();
@@ -94,7 +113,7 @@ describe("Counter API", () => {
     });
 
     it("decrements a positive counter", async () => {
-      await seedCount(5);
+      seedCount(5);
       const res = await invoke("POST", "/decrement"); // 5 - 1 = 4
       const body = await res.json<{ count: number }>();
       expect(body.count).toBe(4);
@@ -117,7 +136,7 @@ describe("Counter API", () => {
 
   describe("portfolio_visited cookie", () => {
     it("skips increment when cookie is 'true'", async () => {
-      await seedCount(3);
+      seedCount(3);
       const res = await invoke("POST", "/increment", undefined, { Cookie: "portfolio_visited=true" });
       expect(res.status).toBe(200);
       const body = await res.json<{ count: number; operation: string }>();
@@ -126,21 +145,21 @@ describe("Counter API", () => {
     });
 
     it("increments normally when cookie is absent", async () => {
-      await seedCount(3);
+      seedCount(3);
       const res = await invoke("POST", "/increment");
       const body = await res.json<{ count: number }>();
       expect(body.count).toBe(4);
     });
 
     it("increments normally when cookie has a different value", async () => {
-      await seedCount(3);
+      seedCount(3);
       const res = await invoke("POST", "/increment", undefined, { Cookie: "portfolio_visited=false" });
       const body = await res.json<{ count: number }>();
       expect(body.count).toBe(4);
     });
 
     it("does not skip decrement when cookie is 'true'", async () => {
-      await seedCount(3);
+      seedCount(3);
       const res = await invoke("POST", "/decrement", undefined, { Cookie: "portfolio_visited=true" });
       const body = await res.json<{ count: number }>();
       expect(body.count).toBe(2);
@@ -156,7 +175,7 @@ describe("Counter API", () => {
     });
 
     it("does not set portfolio_visited cookie on decrement", async () => {
-      await seedCount(3);
+      seedCount(3);
       const res = await invoke("POST", "/decrement");
       await res.text();
       expect(res.headers.get("Set-Cookie")).toBeNull();

@@ -1,6 +1,28 @@
 import type { Env, CounterResponse, ErrorResponse, RequestBody } from "./types";
 
+const COUNTER_KEY = "counter:global";
 const COOKIE_TTL_SECONDS = 24 * 60 * 60; // 24 hours
+
+// Atomically add delta to the counter and clamp the result to >= 0
+const UPSERT_SCRIPT =
+  "local current = redis.call('GET', KEYS[1])" +
+  " if not current then current = '0' end" +
+  " local new_val = math.max(0, tonumber(current) + tonumber(ARGV[1]))" +
+  " redis.call('SET', KEYS[1], tostring(new_val))" +
+  " return new_val";
+
+async function redisCommand(env: Env, ...args: unknown[]): Promise<unknown> {
+  const res = await fetch(env.UPSTASH_URL, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${env.UPSTASH_TOKEN}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(args),
+  });
+  const data = await res.json<{ result: unknown }>();
+  return data.result;
+}
 
 function jsonResponse(body: CounterResponse | ErrorResponse, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -68,12 +90,10 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
     if (operation === "increment" && isReturningVisitor(request)) {
       let count: number;
       try {
-        const row = await env.counter_db_apac
-          .prepare("SELECT count FROM counters WHERE name = 'global'")
-          .first<{ count: number }>();
-        count = row?.count ?? 0;
+        const val = await redisCommand(env, "GET", COUNTER_KEY);
+        count = val !== null ? Number(val) : 0;
       } catch (err) {
-        console.error("D1 read failure", err);
+        console.error("Redis read failure", err);
         return jsonResponse(
           { error: "storage_failure", message: "failed to read counter from storage" },
           500
@@ -88,18 +108,10 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
 
     let count: number;
     try {
-      // Atomically upsert and clamp to 0 in a single statement
-      const row = await env.counter_db_apac
-        .prepare(
-          `INSERT INTO counters (name, count) VALUES ('global', MAX(0, ?))
-           ON CONFLICT(name) DO UPDATE SET count = MAX(0, counters.count + ?)
-           RETURNING count`
-        )
-        .bind(effectiveDelta, effectiveDelta)
-        .first<{ count: number }>();
-      count = row!.count;
+      const result = await redisCommand(env, "EVAL", UPSERT_SCRIPT, 1, COUNTER_KEY, String(effectiveDelta));
+      count = Number(result);
     } catch (err) {
-      console.error("D1 write failure", err);
+      console.error("Redis write failure", err);
       return jsonResponse(
         { error: "storage_failure", message: "failed to update counter in storage" },
         500

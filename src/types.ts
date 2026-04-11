@@ -1,5 +1,6 @@
 export interface Env {
-  counter_db_apac: D1Database;
+  UPSTASH_URL: string;
+  UPSTASH_TOKEN: string;
 }
 
 export interface CounterResponse {
