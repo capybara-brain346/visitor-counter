@@ -1,5 +1,5 @@
 export interface Env {
-  counter_db: D1Database;
+  counter_db_apac: D1Database;
 }
 
 export interface CounterResponse {

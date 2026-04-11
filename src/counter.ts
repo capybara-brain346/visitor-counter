@@ -68,7 +68,7 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
     if (operation === "increment" && isReturningVisitor(request)) {
       let count: number;
       try {
-        const row = await env.counter_db
+        const row = await env.counter_db_apac
           .prepare("SELECT count FROM counters WHERE name = 'global'")
           .first<{ count: number }>();
         count = row?.count ?? 0;
@@ -89,7 +89,7 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
     let count: number;
     try {
       // Atomically upsert and clamp to 0 in a single statement
-      const row = await env.counter_db
+      const row = await env.counter_db_apac
         .prepare(
           `INSERT INTO counters (name, count) VALUES ('global', MAX(0, ?))
            ON CONFLICT(name) DO UPDATE SET count = MAX(0, counters.count + ?)
