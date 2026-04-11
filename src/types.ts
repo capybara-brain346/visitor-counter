@@ -1,6 +1,7 @@
 export interface Env {
   UPSTASH_URL: string;
   UPSTASH_TOKEN: string;
+  ACCESS_TOKEN: string;
 }
 
 export interface CounterResponse {

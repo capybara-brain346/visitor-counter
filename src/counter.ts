@@ -50,7 +50,17 @@ function isReturningVisitor(request: Request): boolean {
   return false;
 }
 
+function isAuthorized(request: Request, env: Env): boolean {
+  const authHeader = request.headers.get("Authorization") ?? "";
+  const [scheme, token] = authHeader.split(" ");
+  return scheme === "Bearer" && token === env.ACCESS_TOKEN;
+}
+
 export async function handleRequest(request: Request, env: Env): Promise<Response> {
+  if (!isAuthorized(request, env)) {
+    return jsonResponse({ error: "unauthorized", message: "invalid or missing access token" }, 401);
+  }
+
   const startMs = Date.now();
   const url = new URL(request.url);
   const pathname = url.pathname;
