@@ -4,9 +4,11 @@ export interface Env {
   ACCESS_TOKEN: string;
 }
 
+export type CounterOperation = "increment" | "decrement" | "read" | "upvote";
+
 export interface CounterResponse {
   count: number;
-  operation: "increment" | "decrement" | "read";
+  operation: CounterOperation;
 }
 
 export interface ErrorResponse {

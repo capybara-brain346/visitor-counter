@@ -1,6 +1,7 @@
 import type { Env, CounterResponse, ErrorResponse, RequestBody } from "./types";
 
 const COUNTER_KEY = "counter:global";
+const BLOG_UPVOTE_KEY_PREFIX = "blog-upvote:";
 const COOKIE_TTL_SECONDS = 24 * 60 * 60; // 24 hours
 const MAX_BODY_BYTES = 1_024; 
 const MAX_DELTA = 1_000;
@@ -42,6 +43,30 @@ function parseDelta(body: RequestBody): number | null {
   return body.delta;
 }
 
+function isValidCount(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+async function getCount(env: Env, key: string): Promise<number> {
+  const value = await redisCommand(env, "GET", key);
+  if (value === null) return 0;
+
+  const count = Number(value);
+  if (!isValidCount(count)) {
+    throw new Error("Redis returned an invalid counter value");
+  }
+  return count;
+}
+
+async function incrementCount(env: Env, key: string): Promise<number> {
+  const value = await redisCommand(env, "INCR", key);
+  const count = Number(value);
+  if (!isValidCount(count)) {
+    throw new Error("Redis returned an invalid counter value");
+  }
+  return count;
+}
+
 function isReturningVisitor(request: Request): boolean {
   const cookieHeader = request.headers.get("Cookie") ?? "";
   for (const part of cookieHeader.split(";")) {
@@ -72,6 +97,42 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
   const startMs = Date.now();
   const url = new URL(request.url);
   const pathname = url.pathname;
+  const upvoteMatch = pathname.match(/^\/upvotes\/([a-f0-9]{64})$/);
+
+  if (upvoteMatch) {
+    const key = BLOG_UPVOTE_KEY_PREFIX + upvoteMatch[1];
+
+    if (request.method === "GET") {
+      try {
+        const count = await getCount(env, key);
+        return jsonResponse({ count, operation: "read" });
+      } catch (err) {
+        console.error("Redis upvote read failure", err);
+        return jsonResponse(
+          { error: "storage_failure", message: "failed to read upvote counter from storage" },
+          500
+        );
+      }
+    }
+
+    if (request.method === "POST") {
+      try {
+        const count = await incrementCount(env, key);
+        return jsonResponse({ count, operation: "upvote" });
+      } catch (err) {
+        console.error("Redis upvote write failure", err);
+        return jsonResponse(
+          { error: "storage_failure", message: "failed to update upvote counter in storage" },
+          500
+        );
+      }
+    }
+
+    return jsonResponse(
+      { error: "method_not_allowed", message: "GET or POST is required for " + pathname },
+      405
+    );
+  }
 
   if (pathname === "/increment" || pathname === "/decrement") {
     if (request.method !== "POST") {

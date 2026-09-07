@@ -6,7 +6,7 @@ export default defineConfig({
     cloudflareTest({
       wrangler: { configPath: "./wrangler.toml" },
       miniflare: {
-        vars: {
+        bindings: {
           UPSTASH_URL: "https://test.upstash.io",
           UPSTASH_TOKEN: "test-token",
           ACCESS_TOKEN: "test-access-token",

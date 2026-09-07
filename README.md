@@ -20,6 +20,10 @@ Client → Cloudflare Worker (edge) → Upstash Redis (atomic EVAL)
 |--------|------|-------------|
 | `POST` | `/increment` | Increment counter, set visited cookie |
 | `POST` | `/decrement` | Decrement counter (floor 0) |
+| `GET` | `/upvotes/:key` | Read a post's upvote count without creating Redis state |
+| `POST` | `/upvotes/:key` | Increment a post's upvote count |
+
+`:key` must be a 64-character lowercase hexadecimal identifier. Upvotes are stored independently as `blog-upvote:<key>` and do not use the visitor cookie.
 
 Optional JSON body for bulk operations:
 

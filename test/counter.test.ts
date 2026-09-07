@@ -17,6 +17,11 @@ vi.stubGlobal("fetch", async (input: RequestInfo, init?: RequestInit): Promise<R
     if (command === "GET") {
       const key = String(args[1]);
       result = store.has(key) ? String(store.get(key)) : null;
+    } else if (command === "INCR") {
+      const key = String(args[1]);
+      const newVal = (store.get(key) ?? 0) + 1;
+      store.set(key, newVal);
+      result = newVal;
     } else if (command === "EVAL") {
       // EVAL script numkeys key delta
       const key = String(args[3]);
@@ -54,6 +59,12 @@ async function invoke(method: string, path: string, body?: unknown, headers?: Re
 function seedCount(value: number): void {
   store.set("counter:global", value);
 }
+
+function seedUpvoteCount(key: string, value: number): void {
+  store.set("blog-upvote:" + key, value);
+}
+
+const BLOG_KEY = "a".repeat(64);
 
 describe("Counter API", () => {
   beforeEach(() => {
@@ -133,6 +144,33 @@ describe("Counter API", () => {
       expect(res.status).toBe(400);
       const body = await res.json<{ error: string }>();
       expect(body.error).toBe("invalid_delta");
+    });
+  });
+
+  describe("blog upvotes", () => {
+    it("returns 0 for an unseen post without creating Redis state", async () => {
+      const res = await invoke("GET", "/upvotes/" + BLOG_KEY);
+      expect(res.status).toBe(200);
+      const body = await res.json<{ count: number; operation: string }>();
+      expect(body).toEqual({ count: 0, operation: "read" });
+      expect(store.has("blog-upvote:" + BLOG_KEY)).toBe(false);
+    });
+
+    it("increments one post without affecting another", async () => {
+      const otherKey = "b".repeat(64);
+      seedUpvoteCount(BLOG_KEY, 2);
+      seedUpvoteCount(otherKey, 5);
+
+      const res = await invoke("POST", "/upvotes/" + BLOG_KEY);
+      expect(res.status).toBe(200);
+      const body = await res.json<{ count: number; operation: string }>();
+      expect(body).toEqual({ count: 3, operation: "upvote" });
+      expect(store.get("blog-upvote:" + otherKey)).toBe(5);
+    });
+
+    it("requires GET or POST for a valid upvote key", async () => {
+      const res = await invoke("DELETE", "/upvotes/" + BLOG_KEY);
+      expect(res.status).toBe(405);
     });
   });
 
